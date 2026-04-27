@@ -470,6 +470,20 @@ _price_cache = {}
 _price_cache_timestamp = {}
 PRICE_CACHE_TTL = 60  # seconds
 
+# PERFORMANCE: Reusable httpx client for connection pooling (avoids TCP handshake per request)
+_httpx_client = None
+
+def _get_httpx_client():
+    """Get or create a reusable httpx async client with connection pooling."""
+    global _httpx_client
+    if _httpx_client is None or _httpx_client.is_closed:
+        _httpx_client = httpx.AsyncClient(
+            timeout=10.0,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+            http2=False,
+        )
+    return _httpx_client
+
 # ========================================
 # Button Style Helper Functions (Telegram Bot API 9.4)
 # ========================================
@@ -549,19 +563,19 @@ async def get_crypto_price_usd(symbol):
         if not coin_id:
             return 1.0  # Default for unknown tokens
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
-                timeout=5.0
-            )
-            data = response.json()
-            price = data.get(coin_id, {}).get('usd', 1.0)
+        client = _get_httpx_client()
+        response = await client.get(
+            f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
+            timeout=5.0
+        )
+        data = response.json()
+        price = data.get(coin_id, {}).get('usd', 1.0)
 
-            # Cache the price
-            _price_cache[symbol] = price
-            _price_cache_timestamp[symbol] = now
+        # Cache the price
+        _price_cache[symbol] = price
+        _price_cache_timestamp[symbol] = now
 
-            return price
+        return price
     except Exception as e:
         logging.error(f"Error fetching price for {symbol}: {e}")
         # Fallback to approximate prices if API fails
@@ -701,6 +715,30 @@ user_stats = {}
 game_sessions = {} # Replaces matches, mines_games, coin_flip_games, etc.
 active_pvb_games = {} # NEW: Track active PvB games per user (fallback to context.chat_data)
 awaiting_single_emoji_bet = {} # Track users awaiting single emoji bet amount (user_id -> game_key)
+
+# ============================================================
+# PERFORMANCE: User-to-active-game index for O(1) lookups
+# Instead of scanning ALL game_sessions to find a user's active game,
+# we maintain an index: user_id -> set of active game_ids
+# ============================================================
+_user_active_games_index: dict = {}  # user_id -> set(game_id)
+
+def _index_user_game(user_id: int, game_id: str):
+    """Add a user->game mapping to the active games index."""
+    if user_id not in _user_active_games_index:
+        _user_active_games_index[user_id] = set()
+    _user_active_games_index[user_id].add(game_id)
+
+def _unindex_user_game(user_id: int, game_id: str):
+    """Remove a user->game mapping from the active games index."""
+    if user_id in _user_active_games_index:
+        _user_active_games_index[user_id].discard(game_id)
+        if not _user_active_games_index[user_id]:
+            del _user_active_games_index[user_id]
+
+def _get_user_active_game_ids(user_id: int) -> set:
+    """Get all active game IDs for a user (O(1) lookup)."""
+    return _user_active_games_index.get(user_id, set())
 
 # ============================================================
 # SIDE BETS DATA STRUCTURES
@@ -1211,7 +1249,7 @@ active_manual_scans: dict = {}
 _dirty_users: set = set()
 _dirty_lock = asyncio.Lock()
 _save_executor = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="disk_writer"
+    max_workers=8, thread_name_prefix="disk_writer"
 )
 
 # -- Global Callback Deduplication ------------------------------------------
@@ -8038,21 +8076,40 @@ def _sync_write_user(user_id):
 
 
 async def _flush_dirty_users():
-    """Background task: flush dirty users to disk every 5 seconds."""
+    """Background task: flush dirty users to disk with adaptive interval.
+    PERFORMANCE: Under high load (many dirty users), flushes every 3s.
+    Under low load, flushes every 10s. This reduces I/O under normal conditions
+    while staying responsive under heavy use."""
     while True:
-        await asyncio.sleep(5)
+        # Adaptive interval: faster under heavy load
+        pending_count = len(_dirty_users)
+        if pending_count > 100:
+            interval = 2   # Heavy load: flush fast
+        elif pending_count > 20:
+            interval = 3   # Moderate load
+        elif pending_count > 0:
+            interval = 5   # Normal load
+        else:
+            interval = 10  # Idle: check less often
+
+        await asyncio.sleep(interval)
         if not _dirty_users:
             continue
         async with _dirty_lock:
             batch = set(_dirty_users)
             _dirty_users.clear()
         loop = asyncio.get_running_loop()
-        tasks = [
-            loop.run_in_executor(_save_executor, _sync_write_user, uid)
-            for uid in batch
-        ]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # PERFORMANCE: Batch into chunks to avoid overwhelming the executor
+        chunk_size = 50
+        for i in range(0, len(batch), chunk_size):
+            chunk = list(batch)[i:i + chunk_size]
+            tasks = [
+                loop.run_in_executor(_save_executor, _sync_write_user, uid)
+                for uid in chunk
+            ]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        if len(batch) > 10:
             logging.debug(f"Flushed {len(batch)} dirty users to disk")
 
 def save_all_user_data():
@@ -10230,16 +10287,20 @@ async def _get_cached_profile_picture(context, user_id: int):
 async def ensure_user_in_wallets(user_id: int, username: str = None, referrer_id: int = None, context: ContextTypes.DEFAULT_TYPE = None, first_name: str = None):
     """OPTIMIZED: Fast path for existing users, deferred API call for new users."""
     # FAST PATH: User already registered (99%+ of cases)
-    # But still update username/first_name if provided
+    # PERFORMANCE: Only save if data actually changed (avoids unnecessary dirty-marking)
     if user_id in user_stats:
         userinfo = user_stats[user_id].get('userinfo', {})
-        # Update first_name and username if they changed
+        changed = False
+        # Update first_name and username only if they actually changed
         if first_name and userinfo.get('first_name') != first_name:
             userinfo['first_name'] = first_name
+            changed = True
         if username and userinfo.get('username') != username:
             userinfo['username'] = username
-        user_stats[user_id]['userinfo'] = userinfo
-        save_user_data(user_id)
+            changed = True
+        if changed:
+            user_stats[user_id]['userinfo'] = userinfo
+            save_user_data(user_id)
         return
 
     # SLOW PATH: New user registration
@@ -17560,6 +17621,7 @@ def extract_game_name(game_type: str) -> str:
 # --- Helper function to check for ongoing emoji games ---
 def get_user_active_emoji_game(user_id: int):
     """Check if a user has any ongoing PvP or PvB emoji game.
+    PERFORMANCE: Uses _user_active_games_index for O(1) lookup instead of scanning all sessions.
 
     Args:
         user_id: The Telegram user ID to check
@@ -17567,29 +17629,39 @@ def get_user_active_emoji_game(user_id: int):
     Returns:
         A tuple of (game_id: str, game_type: str) if an active game exists, otherwise (None, None)
     """
-    """
-    Check if a user has any ongoing PvP or PvB emoji game.
-    Returns (game_id, game_type) if found, otherwise (None, None).
-    """
-    # Check for active PvB games
+    # Fast path: check PvB games first (O(1))
     if user_id in active_pvb_games:
         game_id = active_pvb_games[user_id]
         if game_id in game_sessions and game_sessions[game_id].get('status') == 'active':
             game_type = game_sessions[game_id].get('game_type', '')
             return (game_id, game_type)
 
-    # Check for active PvP games
-    for game_id, game_data in game_sessions.items():
-        if game_data.get('status') == 'active':
+    # Fast path: check indexed active games (O(k) where k = user's active games, typically 0-1)
+    indexed_games = _get_user_active_game_ids(user_id)
+    if indexed_games:
+        for game_id in indexed_games:
+            game_data = game_sessions.get(game_id)
+            if not game_data or game_data.get('status') != 'active':
+                continue
             game_type = game_data.get('game_type', '')
-            # Check if it's an emoji game
             if any(x in game_type for x in ['pvp_dice', 'pvp_darts', 'pvp_goal', 'pvp_bowl',
                                              'pvb_dice', 'pvb_darts', 'pvb_goal', 'pvb_bowl',
                                              'group_challenge_', 'xdxw_']):
-                # Check if user is a player in this game
+                return (game_id, game_type)
+
+    # Fallback: full scan for backward compatibility (handles games indexed before this change)
+    for game_id, game_data in game_sessions.items():
+        if game_data.get('status') == 'active':
+            game_type = game_data.get('game_type', '')
+            if any(x in game_type for x in ['pvp_dice', 'pvp_darts', 'pvp_goal', 'pvp_bowl',
+                                             'pvb_dice', 'pvb_darts', 'pvb_goal', 'pvb_bowl',
+                                             'group_challenge_', 'xdxw_']):
                 if 'players' in game_data and user_id in game_data['players']:
+                    # Backfill the index
+                    _index_user_game(user_id, game_id)
                     return (game_id, game_type)
                 elif 'user_id' in game_data and game_data['user_id'] == user_id:
+                    _index_user_game(user_id, game_id)
                     return (game_id, game_type)
 
     return (None, None)
@@ -30066,9 +30138,11 @@ async def _cleanup_menu_owners():
 
 
 async def _cleanup_game_sessions():
-    """Remove stale/completed game sessions to prevent unbounded dict growth."""
+    """Remove stale/completed game sessions to prevent unbounded dict growth.
+    PERFORMANCE: Runs every 5 minutes (was 15), more aggressive with completed sessions.
+    Also cleans up stale wallet locks, game locks, and active games index."""
     while True:
-        await asyncio.sleep(900)   # every 15 minutes
+        await asyncio.sleep(300)   # every 5 minutes (was 15)
         now = datetime.now(timezone.utc)
         to_delete = []
         for game_id, game in list(game_sessions.items()):
@@ -30083,16 +30157,49 @@ async def _cleanup_game_sessions():
 
             if status == 'active' and age_hours > 2:
                 to_delete.append(game_id)   # abandoned
-            elif status in ('completed', 'cancelled', 'error') and age_hours > 24:
-                to_delete.append(game_id)
+            elif status in ('completed', 'cancelled', 'error', 'declined') and age_hours > 1:
+                to_delete.append(game_id)   # was 24h, now 1h for completed
             elif status == 'pending' and age_hours > 0.167:   # 10 min
+                to_delete.append(game_id)
+            elif status.startswith('pending_') and age_hours > 0.5:  # 30 min for setup states
                 to_delete.append(game_id)
 
         for game_id in to_delete:
+            # Clean up game index entries
+            game = game_sessions.get(game_id, {})
+            for pid in game.get('players', []):
+                _unindex_user_game(pid, game_id)
+            if 'user_id' in game:
+                _unindex_user_game(game['user_id'], game_id)
+            # Clean up sidebet references
+            match_sidebets.pop(game_id, None)
+            # Remove from game locks
+            _game_locks.pop(game_id, None)
+            # Remove session
             game_sessions.pop(game_id, None)
 
+        # Clean up wallet locks for users with no active games (prevent unbounded growth)
+        stale_lock_users = []
+        for uid in list(_wallet_locks.keys()):
+            if uid not in _user_active_games_index and uid not in active_pvb_games:
+                stale_lock_users.append(uid)
+        # Only clean up locks that are not currently held
+        for uid in stale_lock_users[:200]:  # Batch: max 200 per cycle
+            lock = _wallet_locks.get(uid)
+            if lock and not lock.locked():
+                _wallet_locks.pop(uid, None)
+
+        # Clean up active games index for stale entries
+        for uid in list(_user_active_games_index.keys()):
+            stale_ids = set()
+            for gid in _user_active_games_index.get(uid, set()):
+                if gid not in game_sessions or game_sessions[gid].get('status') not in ('active', 'pending', 'pending_reply_challenge', 'pending_setup', 'pending_pvb_setup'):
+                    stale_ids.add(gid)
+            for gid in stale_ids:
+                _unindex_user_game(uid, gid)
+
         if to_delete:
-            logging.info(f"Game session cleanup: removed {len(to_delete)} stale entries")
+            logging.info(f"Game session cleanup: removed {len(to_delete)} stale entries, {len(stale_lock_users)} stale locks")
 # --- Main Function ---)
 # ===== BONUS ADJUSTMENT SYSTEM =====
 async def calculate_all_user_bonuses(bonus_type: str) -> dict:
@@ -31005,29 +31112,31 @@ def calculate_match_win_probability(match_data: dict) -> dict:
                     else:
                         p_draw_round += joint_prob
 
-    # Use recursive probability to calculate match outcome
-    # Dynamic programming approach for "first to N" with current scores
-    from functools import lru_cache
+    # Use iterative dynamic programming instead of recursive lru_cache
+    # This avoids creating a new cache per call and is faster for small state spaces
+    # PERFORMANCE: O(target^2) time and space, which is tiny (max 25 cells for ft5)
+    memo = {}
 
-    @lru_cache(maxsize=1024)
     def match_prob(s1, s2):
-        """Probability that p1 wins given scores s1, s2."""
         if s1 >= target:
             return 1.0
         if s2 >= target:
             return 0.0
-        # p1 wins this round
-        p_p1 = p_win_round * match_prob(s1 + 1, s2)
-        # p2 wins this round
-        p_p2 = p_lose_round * match_prob(s1, s2 + 1)
-        # Draw - replay
-        if p_draw_round > 0:
-            # On draw, same scores, same probabilities (recursive)
-            # Effective probability without draws:
-            effective_p_win = p_win_round / (1 - p_draw_round) if p_draw_round < 1 else 0.5
-            effective_p_lose = p_lose_round / (1 - p_draw_round) if p_draw_round < 1 else 0.5
-            return effective_p_win * match_prob(s1 + 1, s2) + effective_p_lose * match_prob(s1, s2 + 1)
-        return p_p1 + p_p2
+        key = (s1, s2)
+        if key in memo:
+            return memo[key]
+
+        # Handle draws by computing effective probabilities without draws
+        if p_draw_round > 0 and p_draw_round < 1:
+            eff_p_win = p_win_round / (1 - p_draw_round)
+            eff_p_lose = p_lose_round / (1 - p_draw_round)
+        else:
+            eff_p_win = p_win_round
+            eff_p_lose = p_lose_round
+
+        result = eff_p_win * match_prob(s1 + 1, s2) + eff_p_lose * match_prob(s1, s2 + 1)
+        memo[key] = result
+        return result
 
     p_win_p1 = match_prob(p1_score, p2_score)
     p_win_p2 = 1.0 - p_win_p1
@@ -31064,24 +31173,42 @@ def calculate_match_win_probability(match_data: dict) -> dict:
 
 def find_active_emoji_game_for_user(target_user_id: int, chat_id: int = None) -> tuple:
     """Find an active emoji game that a specific user is participating in.
+    PERFORMANCE: Uses index for O(1) lookup instead of full scan.
     Returns (match_id, match_data) or (None, None)."""
-    for match_id, match_data in game_sessions.items():
-        if match_data.get("status") != "active":
-            continue
+    # Fast path: check PvB games
+    if target_user_id in active_pvb_games:
+        game_id = active_pvb_games[target_user_id]
+        game_data = game_sessions.get(game_id)
+        if game_data and game_data.get("status") == "active":
+            if chat_id is None or game_data.get("chat_id") == chat_id:
+                return (game_id, game_data)
 
+    # Fast path: check indexed games
+    for game_id in _get_user_active_game_ids(target_user_id):
+        match_data = game_sessions.get(game_id)
+        if not match_data or match_data.get("status") != "active":
+            continue
         game_type = match_data.get("game_type", "")
         if not any(x in game_type for x in ['pvp_', 'pvb_', 'group_challenge_', 'xdxw_']):
             continue
+        if chat_id is None or match_data.get("chat_id") == chat_id:
+            return (game_id, match_data)
 
-        # Check if target user is a player
+    # Fallback: full scan for backward compatibility
+    for match_id, match_data in game_sessions.items():
+        if match_data.get("status") != "active":
+            continue
+        game_type = match_data.get("game_type", "")
+        if not any(x in game_type for x in ['pvp_', 'pvb_', 'group_challenge_', 'xdxw_']):
+            continue
         players = match_data.get("players", [])
         if target_user_id in players:
             if chat_id is None or match_data.get("chat_id") == chat_id:
+                _index_user_game(target_user_id, match_id)
                 return (match_id, match_data)
-
-        # Also check user_id for PvB games
         if match_data.get("user_id") == target_user_id:
             if chat_id is None or match_data.get("chat_id") == chat_id:
+                _index_user_game(target_user_id, match_id)
                 return (match_id, match_data)
 
     return (None, None)
