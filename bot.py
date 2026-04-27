@@ -782,14 +782,16 @@ PREMIUM_EMOJI_IDS = {
     "deposit":     ("5406745015365943482", "⬇️"),  # FinanceEmoji - downward arrow
     "withdraw":    ("5445355530111437729", "📤"),  # FinanceEmoji - outgoing arrow
     "balance":     ("5409048419211682843", "💵"),
-    "usdt":        ("5409048419211682843", "💵"),  # USDT balance
-    "btc":         ("5377690785674175481", "🪙"),  # BTC coin
-    "eth":         ("5427168083074628963", "💎"),  # ETH gem
-    "sol":         ("5377690785674175481", "🪙"),  # SOL coin
-    "bnb":         ("5427168083074628963", "💎"),  # BNB gem
-    "trx":         ("5377690785674175481", "🪙"),  # TRX coin
-    "ltc":         ("5377690785674175481", "🪙"),  # LTC coin
-    "base":        ("5377690785674175481", "🪙"),  # Base chain coin
+    "usdt":        ("5282947801703017118", "💵"),  # USDT - Tether green logo
+    "btc":         ("5283206889332684532", "\u20bf"), # BTC - Bitcoin orange logo
+    "eth":         ("5282987987003465794", "\u039e"), # ETH - Ethereum diamond logo
+    "sol":         ("5283270973785960855", "\u25ce"), # SOL - Solana purple logo
+    "bnb":         ("5282931714245498898", "\u25c6"), # BNB - BNB yellow logo
+    "trx":         ("5283165538093549710", "\u25c8"), # TRX - TRON red logo
+    "ltc":         ("5283126463291077506", "\u0141"), # LTC - Litecoin silver logo
+    "base":        ("5282987987003465794", "\u25ce"), # Base chain - uses ETH-style logo
+    "usdc":        ("5283350587093946013", "\u24c8"), # USDC - USD Coin blue logo
+    "ton":         ("5283350587093946013", "\u25c7"), # TON - TON blue logo
     "stats":       ("5244837092042750681", "📈"),
     "settings":    ("5904258298764334001", "⚙️"),  # tgiosicons - settings gear
     "back":        ("5416041192905265756", "🏰"),  # From reference bot (castle/tower)
@@ -4790,29 +4792,29 @@ def build_deposit_menu():
     chains_text = [
         f"{pe('eth')} <b>Ethereum (ETH)</b> - ETH, USDT, USDC",
         f"{pe('bnb')} <b>BNB Chain (BNB)</b> - BNB, USDT, USDC",
-        f"{pe('btc')} <b>Base</b> - ETH, USDC",
+        f"{pe('base')} <b>Base</b> - ETH, USDC",
     ]
 
     keyboard_rows = [
         [
-            apply_button_style(InlineKeyboardButton("Ethereum", callback_data="deposit_ETH"), 'primary', peb('eth')),  # BLUE
-            apply_button_style(InlineKeyboardButton("BNB Chain", callback_data="deposit_BNB"), 'primary', peb('bnb'))  # BLUE
+            apply_button_style(InlineKeyboardButton("Ethereum", callback_data="deposit_ETH"), 'primary', peb('eth')),
+            apply_button_style(InlineKeyboardButton("BNB Chain", callback_data="deposit_BNB"), 'primary', peb('bnb'))
         ],
         [
-            apply_button_style(InlineKeyboardButton("Base", callback_data="deposit_BASE"), 'primary', peb('btc')),  # BLUE
+            apply_button_style(InlineKeyboardButton("Base", callback_data="deposit_BASE"), 'primary', peb('base')),
         ]
     ]
 
     # Add TRON if available
     if TRON_AVAILABLE:
-        chains_text.append(f"{pe('red_circle')} <b>TRON (TRX)</b> - TRX, USDT")
-        keyboard_rows[-1].append(apply_button_style(InlineKeyboardButton("TRON", callback_data="deposit_TRON"), 'primary', peb('trx')))  # BLUE
+        chains_text.append(f"{pe('trx')} <b>TRON (TRX)</b> - TRX, USDT")
+        keyboard_rows[-1].append(apply_button_style(InlineKeyboardButton("TRON", callback_data="deposit_TRON"), 'primary', peb('trx')))
 
     # Add Solana if available
     row_3 = []
     if SOLANA_AVAILABLE:
         chains_text.append(f"{pe('sol')} <b>Solana (SOL)</b> - SOL, USDT, USDC")
-        row_3.append(apply_button_style(InlineKeyboardButton("Solana", callback_data="deposit_SOLANA"), 'primary', peb('sol')))  # BLUE
+        row_3.append(apply_button_style(InlineKeyboardButton("Solana", callback_data="deposit_SOLANA"), 'primary', peb('sol')))
 
     # TON deposit removed as per requirements
     # if TON_AVAILABLE:
@@ -27945,6 +27947,57 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_banned
 @check_maintenance
+async def currency_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /currency command - show currency selection menu directly."""
+    user = update.effective_user
+    await ensure_user_in_wallets(user.id, user.username, context=context)
+
+    current_currency = get_active_currency(user.id)
+    user_lang = get_user_lang(user.id)
+    keyboard = []
+
+    crypto_emoji_map = {
+        'USDT': 'usdt', 'BTC': 'btc', 'ETH': 'eth', 'SOL': 'sol',
+        'BNB': 'bnb', 'TRX': 'trx', 'LTC': 'ltc', 'USDC': 'usdc',
+        'TON': 'ton', 'BASE': 'base'
+    }
+
+    for curr in SUPPORTED_CRYPTOS:
+        emoji_key = crypto_emoji_map.get(curr, 'coin')
+        bal = get_wallet(user.id).get(curr, 0.0)
+        price = LIVE_PRICES.get(curr, 1.0)
+        usd_val = bal * price if curr != 'USDT' else bal
+
+        text = f"{curr}"
+        if curr == current_currency:
+            text += " \u2713"  # checkmark
+        text += f"  (${usd_val:,.2f})"
+
+        keyboard.append([apply_button_style(
+            InlineKeyboardButton(text, callback_data=f"setcurrency_{curr}"),
+            'success' if curr == current_currency else 'primary',
+            peb(emoji_key)
+        )])
+
+    keyboard.append([apply_button_style(
+        InlineKeyboardButton("Close", callback_data="close"),
+        'danger', peb('cross')
+    )])
+
+    sent = await update.message.reply_text(
+        f"{pe('wallet')} <b>Select Active Currency</b>\n\n"
+        f"Current: {pe(crypto_emoji_map.get(current_currency, 'coin'))} <b>{current_currency}</b>\n\n"
+        f"Choose your active crypto currency below.\n"
+        f"All bets, tips, and games will use the selected currency.\n\n"
+        f"{pe('warning')} <i>Your balance in each coin is separate (segregated wallets).</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=create_styled_keyboard(keyboard)
+    )
+    set_menu_owner(sent, user.id)
+
+
+@check_banned
+@check_maintenance
 async def currency_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle crypto currency selection (active currency)"""
     query = update.callback_query
@@ -29089,7 +29142,7 @@ async def settings_callback_handler(update: Update, context: ContextTypes.DEFAUL
         current_currency = get_active_currency(user.id)
         keyboard = []
         for curr in SUPPORTED_CRYPTOS:
-            emoji_key = {'USDT':'balance','BTC':'money','ETH':'gem','SOL':'coin','BNB':'diamond','TRX':'diamond','LTC':'coin'}.get(curr, 'gem')
+            emoji_key = {'USDT':'usdt','BTC':'btc','ETH':'eth','SOL':'sol','BNB':'bnb','TRX':'trx','LTC':'ltc','USDC':'usdc','TON':'ton','BASE':'base'}.get(curr, 'coin')
             text = f"{curr}"
             if curr == current_currency:
                 text += " ✓"
@@ -31819,6 +31872,7 @@ def main():
     app.add_handler(CommandHandler("daily", daily_command, block=False))
     app.add_handler(CommandHandler("achievements", achievements_command, block=False))
     app.add_handler(CommandHandler("language", language_command, block=False))
+    app.add_handler(CommandHandler(["currency", "cur"], currency_command, block=False))
     app.add_handler(CommandHandler("admin", admin_dashboard_command, block=False))
     app.add_handler(CommandHandler("setbal", setbal_command, block=False))
     app.add_handler(CommandHandler("resetleaderboard", resetleaderboard_command, block=False))
