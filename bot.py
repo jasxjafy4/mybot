@@ -12453,13 +12453,13 @@ async def bjsplit_test_command(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     keyboard_buttons = [
-        [InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"),
-         InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}")],
+        [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"), 'success', peb('hit')),
+         apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}"), 'danger', peb('stand'))],
     ]
     # Add Double Down button
-    keyboard_buttons.append([InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}")])
+    keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}"), 'primary', peb('double'))])
     # Add Split button (guaranteed split-able)
-    keyboard_buttons.append([InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}")])
+    keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}"), 'primary', peb('deal'))])
 
     caption = (
         f"{pe('cards')} <b>Blackjack TEST (Split Demo)</b> — ID: <code>{game_id}</code>\n"
@@ -12650,15 +12650,15 @@ async def blackjack_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard_buttons = [
-        [InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"),
-         InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}")],
+        [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"), 'success', peb('hit')),
+         apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}"), 'danger', peb('stand'))],
     ]
     # Add Double Down button if eligible
     if len(player_hand) == 2 and get_active_balance_usd(user.id) >= bet_amount_usd:
-        keyboard_buttons.append([InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}")])
+        keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}"), 'primary', peb('double'))])
     # Add Split button if eligible (two cards of same rank value)
     if can_split_hand(player_hand) and get_active_balance_usd(user.id) >= bet_amount_usd:
-        keyboard_buttons.append([InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}")])
+        keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}"), 'primary', peb('deal'))])
 
     caption = (
         f"{pe('cards')} <b>Blackjack</b> — ID: <code>{game_id}</code>\n"
@@ -13572,8 +13572,8 @@ async def blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 player_profile_pic=await _get_cached_profile_picture(context, user.id),
             )
             keyboard_buttons = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}")]
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}"), 'danger', peb('stand'))]
             ]
             caption = (
                 f"{pe('cards')} <b>Blackjack</b> — ID: <code>{game_id}</code>\n"
@@ -13684,11 +13684,11 @@ async def blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
 
             keyboard_buttons = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{current_hand_index}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{current_hand_index}")]
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{current_hand_index}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{current_hand_index}"), 'danger', peb('stand'))]
             ]
             if len(current_hand) == 2 and get_active_balance_usd(user.id) >= current_bet:
-                keyboard_buttons.append([InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{current_hand_index}")])
+                keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{current_hand_index}"), 'primary', peb('double'))])
 
             caption = (
                 f"{pe('cards')} <b>Blackjack - Split</b> — ID: <code>{game_id}</code>\n"
@@ -13713,13 +13713,13 @@ async def blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 player_profile_pic=await _get_cached_profile_picture(context, user.id),
             )
             keyboard_buttons = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}")]
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}"), 'danger', peb('stand'))]
             ]
             if len(game['player_hand']) == 2 and get_active_balance_usd(user.id) >= game['bet_amount']:
-                keyboard_buttons.append([InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}")])
+                keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}"), 'primary', peb('double'))])
             if can_split_hand(game['player_hand']) and get_active_balance_usd(user.id) >= game['bet_amount']:
-                keyboard_buttons.append([InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}")])
+                keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}"), 'primary', peb('deal'))])
 
             caption = (
                 f"{pe('cards')} <b>Blackjack</b> — ID: <code>{game_id}</code>\n"
@@ -13785,12 +13785,12 @@ async def blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
         keyboard_buttons = [
-            [InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_0"),
-             InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_0")]
+            [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_0"), 'success', peb('hit')),
+             apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_0"), 'danger', peb('stand'))]
         ]
         # Can double on split hand if only 2 cards and has balance
         if len(hand1) == 2 and get_active_balance_usd(user.id) >= original_bet:
-            keyboard_buttons.append([InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_0")])
+            keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_0"), 'primary', peb('double'))])
 
         caption = (
             f"{pe('cards')} <b>Blackjack - Split</b> — ID: <code>{game_id}</code>\n"
@@ -13837,11 +13837,11 @@ async def blackjack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 split_results=game.get("split_results", []),
             )
             keyboard_buttons = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{hand_index}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{hand_index}")]
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{hand_index}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{hand_index}"), 'danger', peb('stand'))]
             ]
             if len(game["split_hands"][hand_index]) == 2 and get_active_balance_usd(user.id) >= game["split_bets"][hand_index]:
-                keyboard_buttons.append([InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{hand_index}")])
+                keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{hand_index}"), 'primary', peb('double'))])
 
             caption = (
                 f"{pe('cards')} <b>Blackjack - Split</b> — ID: <code>{game_id}</code>\n"
@@ -13917,11 +13917,11 @@ async def _play_next_split_hand(query, context, game_id, next_hand_index, bot_un
     )
 
     keyboard_buttons = [
-        [InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{next_hand_index}"),
-         InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{next_hand_index}")]
+        [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{next_hand_index}"), 'success', peb('hit')),
+         apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{next_hand_index}"), 'danger', peb('stand'))]
     ]
     if len(hand) == 2 and get_active_balance_usd(user_id) >= current_bet:
-        keyboard_buttons.append([InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{next_hand_index}")])
+        keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{next_hand_index}"), 'primary', peb('double'))])
 
     caption = (
         f"{pe('cards')} <b>Blackjack - Split</b> — ID: <code>{game_id}</code>\n"
@@ -26294,11 +26294,11 @@ async def continue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             keyboard_buttons = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{current_hand_index}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{current_hand_index}")]
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_split_hit_{game_id}_{current_hand_index}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_split_stand_{game_id}_{current_hand_index}"), 'danger', peb('stand'))]
             ]
             if len(current_hand) == 2 and get_active_balance_usd(user.id) >= current_bet:
-                keyboard_buttons.append([InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{current_hand_index}")])
+                keyboard_buttons.append([apply_button_style(InlineKeyboardButton("Double", callback_data=f"bj_split_double_{game_id}_{current_hand_index}"), 'primary', peb('double'))])
             
             caption = (
                 f"{pe('cards')} <b>Blackjack - Split</b> — ID: <code>{game_id}</code>\n"
@@ -26331,15 +26331,15 @@ async def continue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             keyboard = [
-                [InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"),
-                 InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}")],
+                [apply_button_style(InlineKeyboardButton("Hit", callback_data=f"bj_hit_{game_id}"), 'success', peb('hit')),
+                 apply_button_style(InlineKeyboardButton("Stand", callback_data=f"bj_stand_{game_id}"), 'danger', peb('stand'))],
             ]
             # Add Double Down button if eligible
             if len(game['player_hand']) == 2 and get_active_balance_usd(user.id) >= game['bet_amount']:
-                keyboard.append([InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}")])
+                keyboard.append([apply_button_style(InlineKeyboardButton("Double Down", callback_data=f"bj_double_{game_id}"), 'primary', peb('double'))])
             # Add Split button if eligible
             if can_split_hand(game['player_hand']) and get_active_balance_usd(user.id) >= game['bet_amount']:
-                keyboard.append([InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}")])
+                keyboard.append([apply_button_style(InlineKeyboardButton("Split", callback_data=f"bj_split_{game_id}"), 'primary', peb('deal'))])
             
             await update.message.reply_photo(
                 photo=bj_image,
